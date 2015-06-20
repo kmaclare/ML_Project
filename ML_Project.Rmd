@@ -1,0 +1,118 @@
+---
+title: "ML_Project"
+author: "Keith Maclaren"
+date: "Friday, June 19, 2015"
+output: html_document
+---
+Summary
+======
+In this assignment, we are asked to predict the quality of the person's movement based on activity data collected from accelerometers.  These can be attached to devices such as Fitbits, and other off-the-shelf devices on the market today.  We are provided with training & test data to build a predictive model.
+
+```{r warning=FALSE}
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart)
+
+traindf <- read.csv("pml-training.csv")
+testdf <- read.csv("pml-testing.csv")
+```
+
+Pre-Processing
+=============
+
+Based on the data provided, I will ensure all useful data elements are cast to numeric types for the random forest to be most efficient and pre-process out the first few variables to avoid overfitting on username or date.
+```{r}
+dim(traindf)
+dim(testdf)
+
+# pre-processing
+traindf[,7:159] <- sapply(traindf[,7:159],as.numeric) 
+testdf[,7:159] <- sapply(testdf[,7:159], as.numeric) 
+
+
+## feature extraction & selection
+
+# disregard user names, dates, other metadata that doesn't help the model
+traindf <- traindf[8:160]
+testdf <- testdf[8:160]
+
+```
+
+Approach
+==========
+Since we don't know which variables are good predictors, a viable model to test is Random Forest because it uses a random set of predictors and testing several models (ensemble) through an n-fold validation.
+
+I will break up the training data into 70% model building, and 30% for cross validation.  The Train Control parameters allow me to set the number of folds to 3.
+
+```{r}
+set.seed(125)
+
+# since test set only contains 20 observations, 
+# remove features that contain NAs from test set
+isna <- is.na(apply(testdf,2,sum))
+
+testdf <- testdf[,!isna]
+dim(testdf)
+traindf <- traindf[,!isna]
+
+# create validation data set using Train 
+inTrain <- createDataPartition(y=traindf$classe, p=0.7, list=FALSE)
+subtraindf <- traindf[inTrain,]
+cvdf <- traindf[-inTrain,]
+rm(inTrain,isna,traindf)
+
+modFit <- train(classe ~ ., method = "rf", 
+                data = subtraindf, importance = T, 
+                trControl = trainControl(method = "cv", number = 3))
+```
+
+Let's see what the 10 most important variables are:
+```{r}
+vi <- varImp(modFit)
+vi$importance[1:10,]
+plot(varImp(modFit), top = 10)
+```
+
+And the confusion matrix on the 30% of the training data not used to build the model shows the accuracy is over 99%, which means the out-of-sample error rate is less than 1%:
+```{r}
+
+predcv <- predict(modFit, cvdf)
+cm <- confusionMatrix(predcv, cvdf$classe)
+print(cm)
+```
+
+
+Further Analysis:
+===================
+
+
+Plots to show how the random forest converges:
+```{r}
+plot(modFit)
+plot(modFit$finalModel)
+```
+
+
+And now to predict the classe value for the test set:
+
+```{r}
+testdf$classe <- predict(modFit, testdf)
+head(testdf, 20)
+```
+
+And then output the predicted values to files to submit for part 2 of the assignment:
+```{r}
+testdf$classe <- as.character(predict(modFit, testdf))
+
+# write prediction files
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("./predict/problem_id_", i, ".txt")
+                write.table(x[i], file = filename, quote = FALSE, row.names = FALSE, col.names = FALSE)
+        }
+}
+
+pml_write_files(testdf$classe)
+```
